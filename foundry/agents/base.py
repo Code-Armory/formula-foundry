@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import asyncio
 import anthropic
 
 from foundry.core.schema.formula import AgentLayer, FormulaDNA, MathematicalWing
@@ -44,7 +45,7 @@ from foundry.core.schema.formula import AgentLayer, FormulaDNA, MathematicalWing
 logger = logging.getLogger(__name__)
 
 # The model all agents use. Specified once here — never hardcoded in subclasses.
-_AGENT_MODEL = "claude-sonnet-4-5"
+_AGENT_MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 8192
 
 # Tool names that trigger extract_formula() in the agentic loop.
@@ -151,7 +152,7 @@ class BaseAgent(ABC):
 
     def __init__(self, config: AgentConfig) -> None:
         self._config = config
-        self._client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+        self._client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key)
         self._run_terminated: bool = False
         self._run_output_data: Optional[Dict[str, Any]] = None
 
@@ -210,7 +211,7 @@ class BaseAgent(ABC):
             iteration += 1
             logger.debug("[%s] Iteration %d/%d", self.AGENT_ID, iteration, self._config.max_iterations)
 
-            response = self._client.messages.create(
+            response = await self._client.messages.create(
                 model=_AGENT_MODEL,
                 max_tokens=_MAX_TOKENS,
                 system=self.SYSTEM_PROMPT,
@@ -233,7 +234,26 @@ class BaseAgent(ABC):
                     )
                 break
 
-            messages.append({"role": "assistant", "content": response.content})
+            # Extract only API-valid fields from SDK response objects.
+            # model_dump() includes internal SDK fields (e.g. 'caller') that
+            # the API rejects when sent back in subsequent messages.
+            assistant_content = []
+            for block in response.content:
+                if hasattr(block, 'type'):
+                    if block.type == "text":
+                        assistant_content.append({"type": "text", "text": block.text})
+                    elif block.type == "tool_use":
+                        assistant_content.append({
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        })
+                    else:
+                        assistant_content.append({"type": block.type})
+                else:
+                    assistant_content.append(block)
+            messages.append({"role": "assistant", "content": assistant_content})
 
             tool_results_content = []
             for tool_block in tool_use_blocks:

@@ -215,10 +215,21 @@ class LeanREPLManager:
             assert self._process is not None
             self._process.stdin.write(payload.encode("utf-8"))
             self._process.stdin.flush()
-            raw = self._process.stdout.readline()
-            if not raw:
-                raise RuntimeError("REPL subprocess closed stdout")
-            return json.loads(raw.decode("utf-8").strip())
+            buf = ""
+            while True:
+                raw = self._process.stdout.readline()
+                if not raw:
+                    raise RuntimeError("REPL subprocess closed stdout")
+                line = raw.decode("utf-8")
+                if line.strip() == "":
+                    if buf.strip():
+                        return json.loads(buf.strip())
+                    continue
+                buf += line
+                try:
+                    return json.loads(buf.strip())
+                except json.JSONDecodeError:
+                    pass
 
         loop = asyncio.get_event_loop()
         return await asyncio.wait_for(loop.run_in_executor(None, _blocking_io), timeout=timeout)

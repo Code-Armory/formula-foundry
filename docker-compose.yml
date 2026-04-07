@@ -141,6 +141,25 @@ services:
         reservations:
           memory: 4g
 
+  foundry_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: foundry_worker
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      BLACKBOARD_API_URL: http://foundry_api:8000
+      LEAN_WORKER_URL: http://foundry_lean_worker:8080
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: tail -f /dev/null
+    restart: unless-stopped
+
 volumes:
   neo4j_data:
   neo4j_logs:
