@@ -12,13 +12,14 @@ Why one subprocess, not a pool:
   throughput is not the bottleneck.
 
 REPL subprocess protocol:
-  Input  (stdin):  {"cmd": "...", "env": N}\\n
+  Input  (stdin):  {"cmd": "..."}          (no env field on first command)
+                   {"cmd": "...", "env": N} (env field on subsequent commands)
   Output (stdout): {"env": N+1, "messages": [...]}\\n
 
 Startup sequence:
-  1. Spawn REPL subprocess
-  2. Send "import Mathlib" at env=0  (blocks 30-120s on cold start)
-  3. Store base_env index
+  1. Spawn REPL subprocess (with elan on PATH, cwd=/repl)
+  2. Send "import Mathlib" with NO env field (env=0 is rejected by this REPL)
+  3. Store base_env index from response
   4. Mark ready=True
 """
 
@@ -73,6 +74,11 @@ class LeanREPLManager:
             logger.error(self._startup_error)
             raise FileNotFoundError(self._startup_error)
 
+        # Build environment with elan on PATH so the REPL binary can find lean.
+        repl_env = os.environ.copy()
+        elan_home = repl_env.get("ELAN_HOME", "/root/.elan")
+        repl_env["PATH"] = f"{elan_home}/bin:" + repl_env.get("PATH", "")
+
         logger.info("Lean REPL: spawning subprocess: %s", REPL_BINARY)
         self._process = subprocess.Popen(
             [REPL_BINARY],
@@ -80,6 +86,8 @@ class LeanREPLManager:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=0,
+            cwd="/repl",
+            env=repl_env,
         )
         logger.info("Lean REPL: subprocess PID %d", self._process.pid)
         logger.info("Lean REPL: loading Mathlib (maxHeartbeats=%d, timeout=%ds)...",
@@ -87,8 +95,10 @@ class LeanREPLManager:
 
         start = time.monotonic()
         try:
-            init_cmd = f"import Mathlib\nset_option maxHeartbeats {LEAN_MAX_HEARTBEATS}"
-            result = await self._send_raw(init_cmd, env=0, timeout=MATHLIB_LOAD_TIMEOUT)
+            # NOTE: "import Mathlib" must be sent WITHOUT an env field.
+            # The REPL rejects {"cmd": "...", "env": 0} on the first command.
+            result = await self._send_raw("import Mathlib", env=None,
+                                          timeout=MATHLIB_LOAD_TIMEOUT)
         except asyncio.TimeoutError:
             self._startup_error = f"Mathlib failed to load within {MATHLIB_LOAD_TIMEOUT}s."
             logger.error(self._startup_error)
@@ -102,6 +112,17 @@ class LeanREPLManager:
             raise RuntimeError(self._startup_error)
 
         self._base_env = result["env"]
+
+        # Set maxHeartbeats in the Mathlib environment.
+        try:
+            await self._send_raw(
+                f"set_option maxHeartbeats {LEAN_MAX_HEARTBEATS}",
+                env=self._base_env,
+                timeout=10,
+            )
+        except Exception:
+            pass  # Non-fatal — heartbeat default is acceptable
+
         self._ready = True
         self._startup_elapsed = elapsed
         logger.info("Lean REPL: READY. Mathlib loaded in %.1fs. Base env: %d",
@@ -181,8 +202,14 @@ class LeanREPLManager:
                 "Docker will restart the container."
             )
 
-    async def _send_raw(self, cmd: str, env: int, timeout: int) -> Dict[str, Any]:
-        payload = json.dumps({"cmd": cmd, "env": env}, ensure_ascii=False) + "\n"
+    async def _send_raw(self, cmd: str, env: Optional[int],
+                        timeout: int) -> Dict[str, Any]:
+        # Omit the env field entirely when env is None.
+        # The REPL rejects {"env": null} and {"env": 0} on the very first command.
+        msg: Dict[str, Any] = {"cmd": cmd}
+        if env is not None:
+            msg["env"] = env
+        payload = json.dumps(msg, ensure_ascii=False) + "\n\n"
 
         def _blocking_io() -> Dict[str, Any]:
             assert self._process is not None

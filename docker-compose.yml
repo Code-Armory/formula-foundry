@@ -109,7 +109,7 @@ services:
       args:
         # Pin to a specific commit for reproducibility.
         # Set to a full SHA in production: REPL_COMMIT=a1b2c3d4...
-        REPL_COMMIT: main
+        REPL_COMMIT: master
     container_name: foundry_lean_worker
     ports:
       - "8080:8080"   # Expose for development; restrict to foundry_internal in prod
@@ -118,10 +118,6 @@ services:
       PROOF_TIMEOUT_SECONDS: "120"
       MATHLIB_LOAD_TIMEOUT: "300"
       PORT: "8080"
-    volumes:
-      # Persist the .lake build directory across container restarts.
-      # Without this, every restart re-downloads the Mathlib cache.
-      - lean_lake_cache:/repl/.lake
     networks:
       - default
     healthcheck:

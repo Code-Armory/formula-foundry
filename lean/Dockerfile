@@ -9,7 +9,7 @@
 # BUILD TIME (subsequent): ~2-5 min (Docker layer cache)
 # RUNTIME MEMORY: ~4-8 GB for warm Mathlib environment
 #
-# REPL binary: lake build Repl → .lake/build/bin/repl (lowercase)
+# REPL binary: lake build repl → .lake/build/bin/repl (lowercase)
 # ENV REPL_BINARY=/repl/.lake/build/bin/repl (confirmed correct)
 # =============================================================================
 
@@ -39,7 +39,7 @@ RUN curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-ini
     | sh -s -- --default-toolchain none -y \
     && elan --version
 
-ARG REPL_COMMIT=main
+ARG REPL_COMMIT=master
 # PRODUCTION: Replace "main" with a specific commit SHA
 
 WORKDIR /repl
@@ -52,14 +52,26 @@ RUN elan toolchain install "$(cat lean-toolchain)" \
     && elan override set "$(cat lean-toolchain)" \
     && lean --version
 
-RUN lake update \
-    && echo "Lake packages updated, fetching Mathlib cache..." \
-    && lake exe cache get 2>&1 | tee /tmp/mathlib-cache.log \
-    && echo "Cache fetch complete." \
-    && tail -20 /tmp/mathlib-cache.log \
-    || echo "Cache fetch had errors — lake build will compile missing files"
+# Add Mathlib as a dependency so `import Mathlib` works in the REPL.
+# The REPL master branch is standalone — we inject the require here.
+RUN echo '' >> lakefile.toml && \
+    echo '[[require]]' >> lakefile.toml && \
+    echo 'name = "mathlib"' >> lakefile.toml && \
+    echo 'scope = "leanprover-community"' >> lakefile.toml && \
+    echo 'rev = "v4.29.0"' >> lakefile.toml && \
+    cat lakefile.toml
 
-RUN lake build Repl 2>&1 | tee /tmp/repl-build.log \
+RUN lake update 2>&1 | tee /tmp/lake-update.log && \
+    echo "Lake update complete." && \
+    tail -10 /tmp/lake-update.log
+
+RUN echo "Fetching Mathlib prebuilt cache..." && \
+    lake exe cache get 2>&1 | tee /tmp/mathlib-cache.log && \
+    echo "Cache fetch complete." && \
+    tail -20 /tmp/mathlib-cache.log || \
+    echo "Cache fetch had errors — proceeding with lake build"
+
+RUN lake build repl 2>&1 | tee /tmp/repl-build.log \
     && echo "Build complete. Verifying binary:" \
     && ls -la .lake/build/bin/ \
     && .lake/build/bin/repl --help 2>&1 | head -5 || true
@@ -71,7 +83,7 @@ RUN pip3 install --no-cache-dir \
 
 COPY server.py /app/server.py
 
-# Binary path: lake build Repl produces .lake/build/bin/repl (lowercase)
+# Binary path: lake build repl produces .lake/build/bin/repl (lowercase)
 ENV REPL_BINARY=/repl/.lake/build/bin/repl
 ENV LEAN_MAX_HEARTBEATS=400000
 ENV PROOF_TIMEOUT_SECONDS=120
