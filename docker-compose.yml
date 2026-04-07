@@ -1,0 +1,153 @@
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# Formula Foundry — Development Infrastructure
+# ---------------------------------------------------------------------------
+# Services:
+#   neo4j        — The Blackboard (Consensus Mesh graph database)
+#   postgres     — DAG state persistence for Prefect/Dagster orchestration
+#   api          — Blackboard FastAPI layer
+#   lean_worker  — Persistent Lean 4 + Mathlib4 REPL (Agent 151 backend)
+#
+# Ports:
+#   7474 — Neo4j browser     (http://localhost:7474)
+#   7687 — Neo4j Bolt
+#   5432 — PostgreSQL
+#   8000 — Blackboard API    (http://localhost:8000/docs)
+#   8080 — Lean REPL worker  (http://localhost:8080/health) [internal only in prod]
+#
+# ANTHROPIC_API_KEY:
+#   NOT set here — intentional. Agents run as standalone Python processes
+#   (Prefect tasks) and receive ANTHROPIC_API_KEY from the shell at invocation:
+#     ANTHROPIC_API_KEY=sk-... python -m foundry.dag.flows --test
+#
+# First run note:
+#   lean_worker build takes 30-50 min (Mathlib4 cache download ~4GB).
+#   Use: docker-compose build lean_worker && docker-compose up lean_worker
+#   Monitor: docker-compose logs -f lean_worker
+# ---------------------------------------------------------------------------
+
+services:
+
+  neo4j:
+    image: neo4j:5.18-community
+    container_name: foundry_blackboard
+    ports:
+      - "7474:7474"   # Neo4j browser
+      - "7687:7687"   # Bolt
+    environment:
+      NEO4J_AUTH: neo4j/foundry_blackboard
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1g
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_plugins:/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: foundry_dag_state
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: foundry_dag
+      POSTGRES_USER: foundry
+      POSTGRES_PASSWORD: foundry_state
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U foundry -d foundry_dag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: foundry_api
+    ports:
+      - "8000:8000"
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: foundry_blackboard
+      POSTGRES_DSN: postgresql://foundry:foundry_state@postgres:5432/foundry_dag
+      LEAN_WORKER_URL: http://lean_worker:8080
+      BLACKBOARD_SELF_URL: http://localhost:8000
+      LOG_LEVEL: INFO
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    command: >
+      uvicorn foundry.core.api.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --log-level info
+    volumes:
+      - .:/app   # Live reload in dev
+    restart: unless-stopped
+
+
+  lean_worker:
+    build:
+      context: ./lean
+      dockerfile: Dockerfile
+      args:
+        # Pin to a specific commit for reproducibility.
+        # Set to a full SHA in production: REPL_COMMIT=a1b2c3d4...
+        REPL_COMMIT: main
+    container_name: foundry_lean_worker
+    ports:
+      - "8080:8080"   # Expose for development; restrict to foundry_internal in prod
+    environment:
+      LEAN_MAX_HEARTBEATS: "400000"
+      PROOF_TIMEOUT_SECONDS: "120"
+      MATHLIB_LOAD_TIMEOUT: "300"
+      PORT: "8080"
+    volumes:
+      # Persist the .lake build directory across container restarts.
+      # Without this, every restart re-downloads the Mathlib cache.
+      - lean_lake_cache:/repl/.lake
+    networks:
+      - default
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          curl -sf http://localhost:8080/health
+          | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('ready') else 1)"
+      interval: 30s
+      timeout: 10s
+      # 3 min start_period: Mathlib loads into memory on first boot
+      start_period: 180s
+      retries: 5
+    restart: unless-stopped
+    # Resource limits: Lean + Mathlib requires significant memory
+    # Tune based on available host RAM. 8GB is the minimum for complex proofs.
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+        reservations:
+          memory: 4g
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_plugins:
+  postgres_data:
+  lean_lake_cache:   # Persists Mathlib .olean files across lean_worker restarts
