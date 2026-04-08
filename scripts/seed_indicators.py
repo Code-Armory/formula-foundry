@@ -131,7 +131,7 @@ def _to_formula_payload(indicator: Dict[str, Any]) -> Dict[str, Any]:
         "behavioral_mappings": _generate_behavioral_mappings(indicator),
         "axiomatic_origin": ["SYSTEM", indicator.get("source", "unknown")],
         "mathematical_wing": indicator["mathematical_wing"],
-        "proof_status": "hypothesis",
+        "proof_status": "syntactically_correct",
         "tags": indicator.get("tags", []) + [
             "indicator_corpus",
             f"category_{indicator['category'].lower()}",
