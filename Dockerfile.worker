@@ -1,0 +1,31 @@
+# =============================================================================
+# Formula Foundry — Agent Worker
+# =============================================================================
+FROM python:3.12-slim
+
+LABEL maintainer="Formula Foundry"
+LABEL description="Agent Worker — synthesis pipeline + local embeddings"
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends     curl     && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies — base (same as API Dockerfile)
+RUN pip install --no-cache-dir     "fastapi>=0.111.0,<0.200.0"     "uvicorn[standard]>=0.30.0,<0.40.0"     "pydantic>=2.7.0,<3.0.0"     "neo4j>=5.21.0,<6.0.0"     "asyncpg>=0.29.0,<0.30.0"     "sqlalchemy[asyncio]>=2.0.0,<3.0.0"     "anthropic>=0.29.0,<0.60.0"     "sympy>=1.12,<2.0"     "httpx>=0.27.0,<0.30.0"     "python-dotenv>=1.0.0,<2.0.0"     "numpy>=1.26.0,<3.0.0"
+
+# ML dependencies — worker only
+RUN pip install --no-cache-dir sentence-transformers
+
+# Pass HF token for authenticated download during build
+ARG HF_TOKEN=""
+ENV HF_TOKEN=${HF_TOKEN}
+
+# Pre-cache BAAI/bge-large-en-v1.5 into the image (~1.3GB)
+RUN python3 -c "from sentence_transformers import SentenceTransformer; m = SentenceTransformer('BAAI/bge-large-en-v1.5'); v = m.encode(['warmup'], normalize_embeddings=True); print(f'Model cached. Dims: {v.shape[1]}')"
+
+# Enforce offline mode — no HuggingFace network calls at runtime
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+ENV PYTHONPATH=/app
+
+CMD ["tail", "-f", "/dev/null"]
