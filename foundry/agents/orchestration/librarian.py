@@ -47,6 +47,7 @@ Environment:
 from __future__ import annotations
 
 import logging
+import asyncio
 import math
 import os
 from dataclasses import dataclass, field
@@ -166,25 +167,77 @@ class LibrarianRouter:
             for f in formulas
         ]
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    _OPENAI_EMBEDDINGS_URL,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": _EMBEDDING_MODEL,
-                        "input": [text for _, text in texts],
-                        "encoding_format": "float",
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except Exception as exc:
+        _MAX_RETRIES = 3
+        _RETRYABLE = {429, 500, 502, 503, 504}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": _EMBEDDING_MODEL,
+            "input": [text for _, text in texts],
+            "encoding_format": "float",
+        }
+
+        data = None
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for attempt in range(1, _MAX_RETRIES + 1):
+                try:
+                    resp = await client.post(
+                        _OPENAI_EMBEDDINGS_URL, headers=headers, json=payload,
+                    )
+                    if resp.status_code in _RETRYABLE and attempt < _MAX_RETRIES:
+                        retry_after = resp.headers.get("Retry-After")
+                        try:
+                            delay = float(retry_after) if retry_after else float(2 ** (attempt - 1))
+                        except ValueError:
+                            delay = float(2 ** (attempt - 1))
+                        logger.warning(
+                            "[Librarian] Embedding API %s on attempt %d/%d. Backing off %.1fs.",
+                            resp.status_code, attempt, _MAX_RETRIES, delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+                except httpx.RequestError as exc:
+                    if attempt < _MAX_RETRIES:
+                        delay = float(2 ** (attempt - 1))
+                        logger.warning(
+                            "[Librarian] Embedding request error on attempt %d/%d: %s. Backing off %.1fs.",
+                            attempt, _MAX_RETRIES, exc, delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    logger.error(
+                        "[Librarian] Embedding API failed after %d attempts: %s. Jaccard fallback active.",
+                        _MAX_RETRIES, exc,
+                    )
+                    return {}
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code in _RETRYABLE and attempt < _MAX_RETRIES:
+                        retry_after = exc.response.headers.get("Retry-After")
+                        try:
+                            delay = float(retry_after) if retry_after else float(2 ** (attempt - 1))
+                        except ValueError:
+                            delay = float(2 ** (attempt - 1))
+                        logger.warning(
+                            "[Librarian] Embedding HTTP %s on attempt %d/%d. Backing off %.1fs.",
+                            exc.response.status_code, attempt, _MAX_RETRIES, delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    logger.error(
+                        "[Librarian] Embedding API failed (HTTP %s): %s. Jaccard fallback active.",
+                        exc.response.status_code, exc,
+                    )
+                    return {}
+
+        if data is None:
             logger.error(
-                "[Librarian] Embedding API failed: %s. Jaccard fallback active.", exc
+                "[Librarian] Embedding API failed after %d attempts. Jaccard fallback active.",
+                _MAX_RETRIES,
             )
             return {}
 
