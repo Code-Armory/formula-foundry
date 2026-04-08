@@ -20,7 +20,8 @@ ENV PATH="$ELAN_HOME/bin:$PATH"
 RUN curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
     | sh -s -- --default-toolchain none -y && elan --version
 
-ARG REPL_COMMIT=master
+# Pinned 2026-04-08: Lean 4.30.0-rc1 toolchain.
+ARG REPL_COMMIT=c9cde4d461fcf1d56e121bbe7d0c96a7ad40e492
 
 WORKDIR /repl
 RUN git clone https://github.com/leanprover-community/repl.git . \
@@ -51,7 +52,7 @@ RUN echo "Fetching Mathlib prebuilt cache..." && \
 RUN lake build repl 2>&1 | tee /tmp/repl-build.log \
     && echo "Build complete. Verifying binary:" \
     && ls -la .lake/build/bin/ \
-    && .lake/build/bin/repl --help 2>&1 | head -5 || true
+    && .lake/build/bin/repl --help 2>&1 | head -5
 
 # Compute full LEAN_PATH: core Lean lib + ALL Lake package libs
 # server.py reads /tmp/lean_path.txt at startup
