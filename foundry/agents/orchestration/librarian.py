@@ -70,9 +70,19 @@ _TAG_DIVERSITY_WEIGHT: float = 0.15
 _WING_DIVERSITY_WEIGHT_FALLBACK: float = 0.6
 _TAG_DIVERSITY_WEIGHT_FALLBACK: float = 0.4
 
-# OpenAI embedding model — cheap, fast, 1536-dim
-_EMBEDDING_MODEL: str = "text-embedding-3-small"
-_OPENAI_EMBEDDINGS_URL: str = "https://api.openai.com/v1/embeddings"
+# Local embedding model — BAAI/bge-large-en-v1.5 (335M params, 1024-dim)
+# Runs in-process on CPU via sentence-transformers. No external API dependency.
+# Model loads lazily on first call, then stays in memory (~1.3GB).
+_EMBEDDING_MODEL: str = "BAAI/bge-large-en-v1.5"
+_sentence_model = None
+
+def _get_sentence_model():
+    global _sentence_model
+    if _sentence_model is None:
+        from sentence_transformers import SentenceTransformer
+        _sentence_model = SentenceTransformer(_EMBEDDING_MODEL)
+        logger.info("[Librarian] Loaded local embedding model: %s", _EMBEDDING_MODEL)
+    return _sentence_model
 
 _NOISE_TAGS: frozenset = frozenset({
     "seed_corpus", "agent_089", "agent_105", "agent_151", "agent_201",
@@ -143,22 +153,18 @@ class LibrarianRouter:
         self, formulas: List[Dict[str, Any]]
     ) -> Dict[str, List[float]]:
         """
-        Fetch text-embedding-3-small vectors for all eligible formulas.
+        Embed behavioral claims using local BAAI/bge-large-en-v1.5 model.
 
         Input text per formula: behavioral_claim (richest semantic field),
         falling back to name, then uuid[:8] if absent.
 
-        All N formulas are sent in a single batched API request (OpenAI
-        accepts up to 2048 inputs). Returns {uuid: vector} on success,
-        empty dict on failure — callers treat empty dict as Jaccard fallback.
-        """
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            logger.info(
-                "[Librarian] OPENAI_API_KEY not set. Jaccard fallback active."
-            )
-            return {}
+        Returns {uuid: vector} on success, empty dict on failure — callers
+        treat empty dict as Jaccard fallback.
 
+        bge-large-en-v1.5 expects a query prefix for asymmetric retrieval,
+        but we use symmetric similarity (claim vs claim), so no prefix needed.
+        Embeddings are L2-normalized for cosine similarity compatibility.
+        """
         texts: List[Tuple[str, str]] = [
             (
                 f["uuid"],
@@ -167,86 +173,25 @@ class LibrarianRouter:
             for f in formulas
         ]
 
-        _MAX_RETRIES = 3
-        _RETRYABLE = {429, 500, 502, 503, 504}
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": _EMBEDDING_MODEL,
-            "input": [text for _, text in texts],
-            "encoding_format": "float",
-        }
-
-        data = None
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            for attempt in range(1, _MAX_RETRIES + 1):
-                try:
-                    resp = await client.post(
-                        _OPENAI_EMBEDDINGS_URL, headers=headers, json=payload,
-                    )
-                    if resp.status_code in _RETRYABLE and attempt < _MAX_RETRIES:
-                        retry_after = resp.headers.get("Retry-After")
-                        try:
-                            delay = float(retry_after) if retry_after else float(2 ** (attempt - 1))
-                        except ValueError:
-                            delay = float(2 ** (attempt - 1))
-                        logger.warning(
-                            "[Librarian] Embedding API %s on attempt %d/%d. Backing off %.1fs.",
-                            resp.status_code, attempt, _MAX_RETRIES, delay,
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                    resp.raise_for_status()
-                    data = resp.json()
-                    break
-                except httpx.RequestError as exc:
-                    if attempt < _MAX_RETRIES:
-                        delay = float(2 ** (attempt - 1))
-                        logger.warning(
-                            "[Librarian] Embedding request error on attempt %d/%d: %s. Backing off %.1fs.",
-                            attempt, _MAX_RETRIES, exc, delay,
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                    logger.error(
-                        "[Librarian] Embedding API failed after %d attempts: %s. Jaccard fallback active.",
-                        _MAX_RETRIES, exc,
-                    )
-                    return {}
-                except httpx.HTTPStatusError as exc:
-                    if exc.response.status_code in _RETRYABLE and attempt < _MAX_RETRIES:
-                        retry_after = exc.response.headers.get("Retry-After")
-                        try:
-                            delay = float(retry_after) if retry_after else float(2 ** (attempt - 1))
-                        except ValueError:
-                            delay = float(2 ** (attempt - 1))
-                        logger.warning(
-                            "[Librarian] Embedding HTTP %s on attempt %d/%d. Backing off %.1fs.",
-                            exc.response.status_code, attempt, _MAX_RETRIES, delay,
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                    logger.error(
-                        "[Librarian] Embedding API failed (HTTP %s): %s. Jaccard fallback active.",
-                        exc.response.status_code, exc,
-                    )
-                    return {}
-
-        if data is None:
+        try:
+            model = _get_sentence_model()
+            vectors = model.encode(
+                [text for _, text in texts],
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+        except Exception as exc:
             logger.error(
-                "[Librarian] Embedding API failed after %d attempts. Jaccard fallback active.",
-                _MAX_RETRIES,
+                "[Librarian] Local embedding failed: %s. Jaccard fallback active.", exc
             )
             return {}
 
         embeddings: Dict[str, List[float]] = {}
-        for (uuid, _), item in zip(texts, data["data"]):
-            embeddings[uuid] = item["embedding"]
+        for (uuid, _), vec in zip(texts, vectors):
+            embeddings[uuid] = vec.tolist()
 
         logger.info(
-            "[Librarian] Embedded %d formulas via %s.", len(embeddings), _EMBEDDING_MODEL
+            "[Librarian] Embedded %d formulas via %s (local).", len(embeddings), _EMBEDDING_MODEL
         )
         return embeddings
 
