@@ -400,7 +400,7 @@ lean4_notes so the next proof attempt can learn from it.
 
     async def _handle_check_syntax(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         expression = tool_input.get("expression", "")
-        url = f"{self._config.lean_server_url}/check"
+        url = f"{self._config.lean_worker_url}/v1/check"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(url, json={"expression": expression})
@@ -418,7 +418,7 @@ lean4_notes so the next proof attempt can learn from it.
         self._verify_attempt_count += 1
         remaining = LEAN_MAX_ATTEMPTS - self._verify_attempt_count
 
-        url = f"{self._config.lean_server_url}/verify"
+        url = f"{self._config.lean_worker_url}/v1/verify"
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(url, json={
