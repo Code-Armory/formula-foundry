@@ -70,6 +70,8 @@ class AgentConfig:
     lean_worker_url: str = "http://localhost:8080"
     max_iterations: int = 8
     sympy_timeout_seconds: int = 10
+    model: str = ""          # Per-agent override; empty → global _AGENT_MODEL
+    max_tokens: int = 0      # Per-agent override; 0 → global _MAX_TOKENS
 
 
 @dataclass
@@ -211,9 +213,11 @@ class BaseAgent(ABC):
             iteration += 1
             logger.debug("[%s] Iteration %d/%d", self.AGENT_ID, iteration, self._config.max_iterations)
 
+            _model = self._config.model or _AGENT_MODEL
+            _tokens = self._config.max_tokens or _MAX_TOKENS
             response = await self._client.messages.create(
-                model=_AGENT_MODEL,
-                max_tokens=_MAX_TOKENS,
+                model=_model,
+                max_tokens=_tokens,
                 system=self.SYSTEM_PROMPT,
                 tools=self.tools(),
                 messages=messages,

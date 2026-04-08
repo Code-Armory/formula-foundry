@@ -96,13 +96,18 @@ def _select_auditor(formula_tags: set) -> Optional[str]:
     return "agent_151"
 
 
-def _get_agent_config() -> AgentConfig:
+def _get_agent_config(agent_id: str = "") -> AgentConfig:
+    """Build config with optional per-agent model override via AGENT_{id}_MODEL env var."""
+    model = ""
+    if agent_id:
+        model = os.environ.get(f"AGENT_{agent_id}_MODEL", "")
     return AgentConfig(
         anthropic_api_key=os.environ["ANTHROPIC_API_KEY"],
         blackboard_api_url=os.environ.get("BLACKBOARD_API_URL", "http://localhost:8000"),
         lean_worker_url=os.environ.get("LEAN_WORKER_URL", "http://lean_worker:8080"),
         max_iterations=int(os.environ.get("AGENT_MAX_ITERATIONS", "8")),
         sympy_timeout_seconds=int(os.environ.get("SYMPY_TIMEOUT", "10")),
+        model=model,
     )
 
 
@@ -114,6 +119,7 @@ def _get_agent_151_config() -> AgentConfig:
         lean_worker_url=os.environ.get("LEAN_WORKER_URL", "http://lean_worker:8080"),
         max_iterations=int(os.environ.get("AGENT_151_MAX_ITERATIONS", "15")),
         sympy_timeout_seconds=int(os.environ.get("SYMPY_TIMEOUT", "10")),
+        model=os.environ.get("AGENT_151_MODEL", ""),
     )
 
 
