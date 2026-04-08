@@ -138,31 +138,36 @@ class BlackboardClient:
         new_status: ProofStatus,
         agent_id: str,
         agent_layer: AgentLayer = AgentLayer.LAYER_3,
+        lean4_encoding: str | None = None,
     ) -> None:
         """Update proof status with authority enforcement."""
         _assert_write_authority(new_status, agent_layer, agent_id)
         async with self._driver.session() as session:
-            result = await session.run(
-                """
-                MATCH (f:Formula {uuid: $uuid})
-                SET f.proof_status = $status, f.updated_at = $now
+            # Conditionally SET lean4_encoding when provided (FORMALLY_VERIFIED)
+            lean4_clause = ", f.lean4_encoding = $lean4" if lean4_encoding else ""
+            query = f"""
+                MATCH (f:Formula {{uuid: $uuid}})
+                SET f.proof_status = $status, f.updated_at = $now{lean4_clause}
                 WITH f
-                MERGE (a:Agent {agent_id: $agent_id})
-                MERGE (a)-[:VERIFIED {timestamp: $now, status: $status}]->(f)
+                MERGE (a:Agent {{agent_id: $agent_id}})
+                MERGE (a)-[:VERIFIED {{timestamp: $now, status: $status}}]->(f)
                 RETURN f.uuid AS uuid
-                """,
+                """
+            params = dict(
                 uuid=uuid,
                 status=new_status.value,
                 agent_id=agent_id,
                 now=_utcnow_iso(),
             )
+            if lean4_encoding:
+                params["lean4"] = lean4_encoding
+            result = await session.run(query, **params)
             record = await result.single()
             if not record:
                 raise KeyError(f"Formula {uuid} not found in Blackboard")
         logger.info(
             "Blackboard: Agent %s updated %s → %s", agent_id, uuid, new_status.value
         )
-
     async def cross_link(
         self,
         uuid_a: str,

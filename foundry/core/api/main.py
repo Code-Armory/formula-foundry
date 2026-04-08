@@ -101,6 +101,7 @@ class UpdateStatusRequest(BaseModel):
     new_status: ProofStatus
     agent_id: str
     agent_layer: AgentLayer = AgentLayer.LAYER_3
+    lean4_encoding: Optional[str] = None
 
 
 class CrossLinkRequest(BaseModel):
@@ -261,6 +262,7 @@ async def update_status(uuid: str, req: UpdateStatusRequest):
             new_status=req.new_status,
             agent_id=req.agent_id,
             agent_layer=req.agent_layer,
+            lean4_encoding=req.lean4_encoding,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))

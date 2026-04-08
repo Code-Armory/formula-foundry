@@ -495,15 +495,22 @@ lean4_notes so the next proof attempt can learn from it.
         if new_status is None:
             return {"error": f"Unknown status: {new_status_str}", "accepted": False}
 
+        # Combine theorem + proof into lean4_encoding for Blackboard persistence.
+        # FormulaDNA validator requires lean4_encoding when status=FORMALLY_VERIFIED.
+        lean4_encoding = None
+        if new_status_str == "formally_verified":
+            theorem = tool_input.get("lean4_theorem_statement", "")
+            proof = tool_input.get("lean4_proof_body", "")
+            lean4_encoding = f"-- Theorem\n{theorem}\n\n-- Proof\n{proof}"
+
         url = f"{self._config.blackboard_api_url}/v1/formulas/{uuid}/status"
         payload = {
             "new_status":   new_status.value,
             "agent_id":     self.AGENT_ID,
             "agent_layer":  AgentLayer.LAYER_3.value,
-            "lean4_theorem_statement": tool_input.get("lean4_theorem_statement", ""),
-            "lean4_proof_body":        tool_input.get("lean4_proof_body", ""),
-            "lean4_notes":             lean4_notes,
         }
+        if lean4_encoding:
+            payload["lean4_encoding"] = lean4_encoding
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
