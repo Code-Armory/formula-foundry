@@ -48,7 +48,7 @@ _CHECK_SYNTAX_TOOL = {
     "name": "check_lean_syntax",
     "description": (
         "FAST GATE. Validate a Lean 4 expression via #check. "
-        "Use before committing to a full theorem. Fast — use freely. "
+        "Use before committing to a full theorem. Max 2 calls per audit. "
         "Examples: '#check Real.exp', '#check @mul_lt_mul_of_pos_left'"
     ),
     "input_schema": {
@@ -336,13 +336,27 @@ Instead, identify the KEY ALGEBRAIC CLAIM in the behavioral_claim:
 Choose ONE claim. Make it a clean, self-contained theorem. Prove it completely.
 
 ═══════════════════════════════════════════════════════
-MANDATORY WORKFLOW
+MANDATORY WORKFLOW & PACING
 ═══════════════════════════════════════════════════════
 
-STEP 1 — FETCH: fetch_formula_data with the provided UUID. Read everything.
-STEP 2 — SYNTAX CHECK: check_lean_syntax to validate types and lemma names.
+You have a strict iteration budget. Manage your tool calls as follows:
+
+STEP 1 — FETCH (1 call): fetch_formula_data. Read everything.
+
+STEP 2 — SYNTAX (max 2 calls): check_lean_syntax to validate key types
+  and lemma names. HARD CAP: 2 syntax checks maximum. Even if a check
+  returns errors, you MUST move to STEP 3 by your 4th iteration.
+
 STEP 3 — PROOF (up to {LEAN_MAX_ATTEMPTS} attempts): verify_lean_proof.
-STEP 4 — TERMINAL: update_formula_status (one of three outcomes).
+  This is where the real work happens. Read Lean elaborator errors
+  carefully between attempts. Use seed proofs above as templates.
+
+STEP 4 — TERMINAL (1 call): update_formula_status. You MUST reach this
+  step. If proof succeeds → formally_verified. If counterexample found →
+  falsified. If attempts exhausted → syntactically_correct.
+
+PACING RULE: fetch(1) + syntax(≤2) + proof(≤{LEAN_MAX_ATTEMPTS}) + status(1).
+Do NOT get stuck in a syntax-checking loop. Progress the workflow.
 
 ═══════════════════════════════════════════════════════
 FALSIFICATION PROTOCOL
@@ -380,7 +394,7 @@ You hold the Master Lock. Fetch this formula, identify its core algebraic \
 claim, and formally verify it in Lean 4 / Mathlib4.
 
 Proof attempts budget: {LEAN_MAX_ATTEMPTS} calls to verify_lean_proof.
-Use check_lean_syntax liberally to validate types before proof attempts.
+Syntax checks: max 2. Then commit to proof attempts immediately.
 
 Begin with fetch_formula_data.\
 """

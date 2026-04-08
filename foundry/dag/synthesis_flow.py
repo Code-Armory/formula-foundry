@@ -106,6 +106,17 @@ def _get_agent_config() -> AgentConfig:
     )
 
 
+def _get_agent_151_config() -> AgentConfig:
+    """Agent 151 needs extra runway: 1 fetch + 2 syntax + 5 proofs + 1 status = 9 minimum."""
+    return AgentConfig(
+        anthropic_api_key=os.environ["ANTHROPIC_API_KEY"],
+        blackboard_api_url=os.environ.get("BLACKBOARD_API_URL", "http://localhost:8000"),
+        lean_worker_url=os.environ.get("LEAN_WORKER_URL", "http://lean_worker:8080"),
+        max_iterations=int(os.environ.get("AGENT_151_MAX_ITERATIONS", "15")),
+        sympy_timeout_seconds=int(os.environ.get("SYMPY_TIMEOUT", "10")),
+    )
+
+
 try:
     from prefect import task, flow, get_run_logger
     _USE_PREFECT = True
@@ -202,7 +213,7 @@ async def run_agent_151_task(formula_uuid: str, formula_name: str) -> AgentRunRe
     log = get_run_logger()
     log.info("Invoking Agent 151 on: %s ('%s')", formula_uuid[:8], formula_name)
 
-    config = _get_agent_config()
+    config = _get_agent_151_config()
     agent = Lean4Auditor(config)
     result = await agent.run({
         "uuid": formula_uuid,

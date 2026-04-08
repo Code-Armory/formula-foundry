@@ -78,6 +78,16 @@ class LeanREPLManager:
         repl_env = os.environ.copy()
         elan_home = repl_env.get("ELAN_HOME", "/root/.elan")
         repl_env["PATH"] = f"{elan_home}/bin:" + repl_env.get("PATH", "")
+        # Load LEAN_PATH from build-time computed file, or fall back to ENV.
+        lean_path_file = "/tmp/lean_path.txt"
+        if os.path.exists(lean_path_file):
+            with open(lean_path_file, "r") as f:
+                repl_env["LEAN_PATH"] = f.read().strip()
+            logger.info("Lean REPL: loaded LEAN_PATH from %s", lean_path_file)
+        elif "LEAN_PATH" in repl_env:
+            logger.info("Lean REPL: using LEAN_PATH from environment")
+        else:
+            logger.warning("Lean REPL: NO LEAN_PATH set — Mathlib will not load!")
 
         logger.info("Lean REPL: spawning subprocess: %s", REPL_BINARY)
         self._process = subprocess.Popen(
