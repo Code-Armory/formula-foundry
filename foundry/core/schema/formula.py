@@ -40,6 +40,7 @@ class MathematicalWing(str, Enum):
     FUNCTIONAL_ANALYSIS = "functional_analysis"
     TOPOLOGY_GEOMETRY = "topology_geometry"
     PROBABILITY_INFORMATION = "probability_information"
+    INFORMATION_GEOMETRY = "information_geometry"   # Added: Fisher metric, KL divergence, manifold structure
     MEASURE_THEORY = "measure_theory"       # Added: integral operators, aggregation
     ERGODIC_THEORY = "ergodic_theory"       # Added: temporal scale bridging, time averages
     SYNTHESIZER = "synthesizer"
