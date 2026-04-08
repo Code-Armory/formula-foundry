@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import subprocess
+import re
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -189,7 +190,18 @@ class LeanREPLManager:
         if not self.is_ready:
             return {"valid": False, "errors": ["REPL not ready"]}
 
-        cmd = f"#check ({expression})"
+        # Normalize accidental '#check' prefix from callers
+        expr = expression.strip()
+        expr = re.sub(r"^\s*#check\b\s*", "", expr, count=1)
+
+        # Reject non-expression inputs that would produce misleading errors
+        _bad = ("theorem", "lemma", "example", "def", "import", "--", "/-")
+        if "\n" in expr or any(expr.startswith(b) for b in _bad):
+            return {"valid": False, "type_info": None, "errors": [
+                "check_expression only accepts a single Lean expression for #check."
+            ]}
+
+        cmd = f"#check ({expr})"
         async with self._lock:
             self._assert_process_alive()
             try:

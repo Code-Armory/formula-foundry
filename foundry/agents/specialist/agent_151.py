@@ -47,9 +47,11 @@ _FETCH_FORMULA_TOOL = {
 _CHECK_SYNTAX_TOOL = {
     "name": "check_lean_syntax",
     "description": (
-        "FAST GATE. Validate a Lean 4 expression via #check. "
+        "FAST GATE. Validate a single Lean term/name/expression via #check. "
+        "Do NOT include '#check' — the server wraps your input automatically. "
+        "Do not send theorem declarations, proof bodies, comments, imports, or multiline code. "
         "Use before committing to a full theorem. Max 2 calls per audit. "
-        "Examples: '#check Real.exp', '#check @mul_lt_mul_of_pos_left'"
+        "Examples: 'Real.exp', '@mul_lt_mul_of_pos_left', 'fun x : Real => x + 1'"
     ),
     "input_schema": {
         "type": "object",
